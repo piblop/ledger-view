@@ -477,3 +477,64 @@ h3 {
   margin: 0 auto;
   padding: 0 16px 32px;
 }
+
+.head.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.flow-wrap {
+  min-width: 720px;
+}
+svg.flow .fl-name {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+svg.flow .fl-val {
+  fill: var(--muted);
+  font-size: 11px;
+}
+svg.flow .node {
+  cursor: pointer;
+  outline: none;
+}
+svg.flow .node:focus-visible rect,
+svg.flow .node:hover rect {
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+.drivers:not(:empty) {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 4px;
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.seg button {
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 0;
+  height: 30px;
+  font-weight: 500;
+  font-size: 12px;
+}
+.seg button + button {
+  border-left: 1px solid var(--border-strong);
+}
+.seg button.on {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+}
+/* Grid children may shrink below their content, so wide charts scroll inside their card, not the page. */
+.content > *,
+.grid2 > * {
+  min-width: 0;
+}

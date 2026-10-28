@@ -317,11 +317,202 @@ function assets(c, d) {
   c.append(g);
 }
 
+// ---------- profit and loss flow ----------
+const BUCKET_COLOUR = {
+  Income: "var(--g6)",
+  Home: "var(--g1)",
+  Variable: "var(--g2)",
+  Car: "var(--g3)",
+  Other: "var(--g4)",
+  Investment: "var(--g7)",
+  Debt: "var(--g8)",
+  Surplus: "var(--g9)",
+  Shortfall: "var(--g9)",
+};
+const sumOf = (lines) => lines.reduce((a, l) => a + l.amount, 0);
+
+/**
+ * Where the money went, as in the app: income sources flow into Income, which splits into cost buckets (then their
+ * five biggest categories), investing, debt repayments and what was left over; a gap shows as "From savings or
+ * borrowing". Click a box for its ten largest transactions.
+ */
+function flowChart(pl) {
+  const nodes = [];
+  const links = [];
+  const node = (name, group, col) => {
+    let n = nodes.find((x) => x.name === name);
+    if (!n) nodes.push((n = { name, group, col, value: 0, lines: [], inOff: 0, outOff: 0 }));
+    return n;
+  };
+  const link = (a, b, value) => value > 0 && links.push({ a, b, value });
+  const hub = node("Income", "Income", 1);
+  const income = pl.income.filter((l) => l.amount > 0);
+  hub.lines = income;
+  for (const l of income) {
+    const n = node(l.category, "Income", 0);
+    n.lines = [l];
+    link(n, hub, l.amount);
+  }
+  const totalIn = sumOf(income);
+  const buckets = new Map();
+  for (const l of pl.costs.filter((x) => x.amount > 0)) buckets.set(l.bucket, [...(buckets.get(l.bucket) ?? []), l]);
+  let totalOut = 0;
+  for (const [bucket, lines] of [...buckets].sort((a, b) => sumOf(b[1]) - sumOf(a[1]))) {
+    const total = sumOf(lines);
+    totalOut += total;
+    const b = node(`${bucket} costs`, bucket, 2);
+    b.lines = lines;
+    link(hub, b, total);
+    const sorted = [...lines].sort((x, y) => y.amount - x.amount);
+    for (const l of sorted.slice(0, 5)) {
+      const c = node(l.category, bucket, 3);
+      c.lines = [l];
+      link(b, c, l.amount);
+    }
+    const rest = sorted.slice(5);
+    if (rest.length) {
+      const o = node(`Other ${bucket.toLowerCase()}`, bucket, 3);
+      o.lines = rest;
+      link(b, o, sumOf(rest));
+    }
+  }
+  const investing = sumOf(pl.investing.filter((l) => l.amount > 0));
+  if (investing > 0) {
+    const n = node("Investing", "Investment", 2);
+    n.lines = pl.investing;
+    link(hub, n, investing);
+    totalOut += investing;
+  }
+  const debt = sumOf(pl.debt.filter((l) => l.amount > 0));
+  if (debt > 0) {
+    const n = node("Debt repayments", "Debt", 2);
+    n.lines = pl.debt;
+    link(hub, n, debt);
+    totalOut += debt;
+  }
+  if (totalIn > totalOut) link(hub, node("Left over", "Surplus", 2), totalIn - totalOut);
+  if (totalOut > totalIn) link(node("From savings or borrowing", "Shortfall", 0), hub, totalOut - totalIn);
+  for (const l of links) {
+    l.a.out = (l.a.out ?? 0) + l.value;
+    l.b.in = (l.b.in ?? 0) + l.value;
+  }
+  for (const n of nodes) n.value = Math.max(n.in ?? 0, n.out ?? 0);
+
+  // Layout: four columns, one vertical scale, a gap between boxes.
+  const W = 1000;
+  const NW = 12;
+  const GAP = 10;
+  const cols = [0, 1, 2, 3].map((c) => nodes.filter((n) => n.col === c));
+  // Every box gets a slot tall enough for its two-line label; a box keeps its true height inside its slot.
+  const SLOT = 30;
+  const base = Math.max(totalIn, totalOut) || 1;
+  const k = 560 / base;
+  const slotOf = (n) => Math.max(SLOT, Math.max(2, n.value * k));
+  const H = Math.max(360, ...cols.map((c) => c.reduce((a, n) => a + slotOf(n), 0) + GAP * Math.max(0, c.length - 1)));
+  const X = [200, 430, 650, 800];
+  for (const [ci, col] of cols.entries()) {
+    const total = col.reduce((a, n) => a + slotOf(n), 0) + GAP * Math.max(0, col.length - 1);
+    let y = (H - total) / 2;
+    for (const n of col) {
+      n.x = X[ci];
+      n.h = Math.max(2, n.value * k);
+      n.y = y + (slotOf(n) - n.h) / 2;
+      y += slotOf(n) + GAP;
+    }
+  }
+  const pctMode = { on: false };
+  const fmtV = (v) => (pctMode.on ? `${((v / base) * 100).toFixed(v / base < 0.1 ? 1 : 0)}%` : audK(v));
+  const svg = s("svg", { class: "chart flow", viewBox: `0 0 ${W} ${H + 10}`, role: "img", "aria-label": "Where the money went" });
+  const drivers = h("div", { class: "drivers" });
+  const labels = [];
+  // Links, drawn in each box's order so bands do not cross within a box.
+  for (const l of links) {
+    const h0 = l.value * k;
+    const y0 = l.a.y + l.a.outOff;
+    const y1 = l.b.y + l.b.inOff;
+    l.a.outOff += h0;
+    l.b.inOff += h0;
+    const x0 = l.a.x + NW;
+    const x1 = l.b.x;
+    const xm = (x0 + x1) / 2;
+    const colour = BUCKET_COLOUR[l.b.col >= 2 ? l.b.group : l.a.group] ?? "var(--g9)";
+    svg.append(
+      s(
+        "path",
+        { d: `M${x0},${y0}C${xm},${y0} ${xm},${y1} ${x1},${y1}L${x1},${y1 + h0}C${xm},${y1 + h0} ${xm},${y0 + h0} ${x0},${y0 + h0}Z`, fill: colour, "fill-opacity": 0.22 },
+        s("title", {}, `${l.a.name} → ${l.b.name}: ${aud(l.value)}`),
+      ),
+    );
+  }
+  for (const n of nodes) {
+    const g = s("g", { class: "node", tabindex: 0, role: "button", "aria-label": `${n.name}, ${aud(n.value)}. Show the largest transactions.` });
+    g.append(s("rect", { x: n.x, y: n.y, width: NW, height: n.h, rx: 3, fill: BUCKET_COLOUR[n.group] ?? "var(--g9)" }, s("title", {}, `${n.name}: ${aud(n.value)}`)));
+    const left = n.col === 0;
+    const tx = left ? n.x - 8 : n.x + NW + 8;
+    const ty = n.y + n.h / 2;
+    const name = s("text", { x: tx, y: ty - 2, "text-anchor": left ? "end" : "start", class: "fl-name" }, n.name);
+    const val = s("text", { x: tx, y: ty + 12, "text-anchor": left ? "end" : "start", class: "fl-val" }, fmtV(n.value));
+    labels.push([val, n]);
+    g.append(name, val);
+    const pick = () => showDrivers(n);
+    g.addEventListener("click", pick);
+    g.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), pick()));
+    svg.append(g);
+  }
+  function showDrivers(n) {
+    const top = n.lines
+      .flatMap((l) => (l.top ?? []).map((t) => ({ ...t, category: l.category })))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 10);
+    drivers.replaceChildren(
+      h("h3", {}, `Largest transactions: ${n.name} (${aud(n.value)})`),
+      top.length
+        ? h(
+            "table",
+            {},
+            h(
+              "tbody",
+              {},
+              top.map((t) =>
+                h("tr", {}, h("td", { class: "nowrap" }, date(t.date)), h("td", {}, t.description, h("span", { class: "sub" }, [t.category, t.detail].filter(Boolean).join(" · "))), h("td", { class: "r" }, money(t.amount))),
+              ),
+            ),
+          )
+        : h("p", { class: "muted" }, n.name === "Left over" ? "What was not spent, invested or used to repay debt." : "No individual transactions behind this box."),
+    );
+    drivers.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  const toggle = h("div", { class: "seg", role: "group", "aria-label": "Show amounts as" });
+  for (const [label, on] of [
+    ["Dollars", false],
+    ["Percent", true],
+  ]) {
+    const b = h("button", { type: "button", class: on === pctMode.on ? "on" : "", "aria-pressed": String(on === pctMode.on) }, label);
+    b.addEventListener("click", () => {
+      pctMode.on = on;
+      for (const [t, n] of labels) t.textContent = fmtV(n.value);
+      toggle.querySelectorAll("button").forEach((x) => {
+        const active = x.textContent === label;
+        x.classList.toggle("on", active);
+        x.setAttribute("aria-pressed", String(active));
+      });
+    });
+    toggle.append(b);
+  }
+  return h(
+    "section",
+    { class: "card" },
+    h("div", { class: "head row" }, h("div", {}, h("h2", {}, "Where the money went"), h("p", {}, "Income on the left, through to what it paid for. Click a box for its ten largest transactions. Percent is a share of money in.")), toggle),
+    h("div", { class: "body" }, h("div", { class: "scroll" }, h("div", { class: "flow-wrap" }, svg)), drivers),
+  );
+}
+
 function pnl(c, d) {
   const pl = d.pnl;
   const maxCost = Math.max(1, ...pl.costs.map((x) => x.amount));
   c.append(
     h("div", { class: "tiles" }, tile("Income", aud(pl.totals.income)), tile("Costs", aud(pl.totals.costs)), tile(pl.totals.net >= 0 ? "Profit" : "Loss", aud(pl.totals.net)), tile("Invested", aud(pl.totals.investing))),
+    flowChart(pl),
     h(
       "div",
       { class: "grid2" },
