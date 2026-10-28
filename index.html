@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'" />
+    <title>Ledger</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%231c5884'/%3E%3Cpath d='M4 12V8M7 12V4M10 12V7M13 12V5' stroke='white' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main id="lock" class="lock">
+      <form id="unlock" class="lock-card" autocomplete="off">
+        <div class="brand"><span class="mark" aria-hidden="true"></span><span>Ledger</span></div>
+        <h1>Read-only summary</h1>
+        <p class="muted">The figures on this page are encrypted. Enter the password to open them in this browser; it is never sent anywhere.</p>
+        <label for="pw">Password</label>
+        <input id="pw" type="password" autocomplete="current-password" required autofocus />
+        <button id="open" type="submit">Open</button>
+        <p id="err" class="err" role="alert"></p>
+      </form>
+    </main>
+    <div id="app" class="app" hidden>
+      <header class="top">
+        <div class="brand"><span class="mark" aria-hidden="true"></span><span>Ledger</span><span class="tag">Read only</span></div>
+        <div class="top-right">
+          <span id="asof" class="muted"></span>
+          <button id="lockbtn" type="button" class="ghost">Lock</button>
+        </div>
+      </header>
+      <div id="content" class="content"></div>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
