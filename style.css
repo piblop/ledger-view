@@ -538,3 +538,202 @@ svg.flow .node:hover rect {
 .grid2 > * {
   min-width: 0;
 }
+
+/* ---------- controls shared by the pages ---------- */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.small {
+  font-size: 12px;
+}
+.big {
+  font-size: 20px;
+}
+.grow {
+  flex: 1 1 260px;
+}
+.filters select,
+.filters input[type="date"],
+.content select,
+.assume input,
+.assumptions input {
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 10px;
+  font: inherit;
+}
+button.link {
+  background: none;
+  border: 0;
+  padding: 0;
+  height: auto;
+  color: var(--accent);
+  font-weight: 500;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.crumbs {
+  font-size: 14px;
+}
+.dim td {
+  color: var(--muted);
+}
+
+/* Spending drill-down rows. */
+.bars {
+  display: grid;
+  gap: 2px;
+}
+.barrow {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) 2fr 110px 52px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: auto;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 400;
+  text-align: left;
+}
+.barrow:hover {
+  background: var(--surface-2);
+}
+.bname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btrack {
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.bfill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+.pctcol {
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .barrow {
+    grid-template-columns: 1fr 90px;
+  }
+  .barrow .btrack,
+  .barrow .pctcol {
+    display: none;
+  }
+}
+
+/* Profit and loss statement: each line opens to its merchants. */
+.stmt details {
+  border-bottom: 1px solid var(--border);
+}
+.stmt summary {
+  display: grid;
+  grid-template-columns: 1fr 52px 110px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 4px;
+  cursor: pointer;
+  list-style: none;
+}
+.stmt summary::-webkit-details-marker {
+  display: none;
+}
+.stmt details[open] summary {
+  background: var(--surface-2);
+  border-radius: 6px;
+}
+.stmt-total {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 4px 0;
+}
+
+/* Asset tracker. */
+.range52 {
+  width: 110px;
+  margin-left: auto;
+}
+.rtrack {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.rtrack span {
+  position: absolute;
+  top: -3px;
+  width: 4px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--text);
+}
+.band .dotm {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  border: 1px solid var(--surface);
+  transform: translateX(-50%);
+}
+.assume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.small-input {
+  width: 80px;
+}
+.assumptions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px 16px;
+  align-items: end;
+}
+.assumptions label {
+  display: grid;
+  gap: 4px;
+}
+
+/* Percent only: dollar figures are hidden everywhere; shares stay readable. */
+body.pct .num,
+body.pct svg text.axis,
+body.pct .fl-val {
+  filter: blur(6px);
+}
+body.pct .pctcol,
+body.pct .fl-val {
+  filter: none;
+}
+.top-right .seg button {
+  height: 30px;
+}
+@media (max-width: 600px) {
+  .top .tag {
+    display: none;
+  }
+  .top-right .seg button {
+    padding: 0 8px;
+  }
+}
