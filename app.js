@@ -84,7 +84,8 @@ function lineChart(series, { height = 240, fmt = audK } = {}) {
   }
   const step = Math.ceil(xs.length / 8);
   xs.forEach((x, i) => {
-    if (i % step === 0 || i === xs.length - 1) svg.append(s("text", { x: X(i), y: H - 6, "text-anchor": "middle" }, monthLabel(x)));
+    // The last label sits flush right so it is not cut off at the edge.
+    if (i % step === 0 || i === xs.length - 1) svg.append(s("text", { x: X(i), y: H - 6, "text-anchor": i === xs.length - 1 ? "end" : "middle" }, monthLabel(x)));
   });
   for (const sr of series) {
     const d = sr.points.map((p, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(p.y).toFixed(1)}`).join("");
@@ -169,28 +170,51 @@ function valueBand(v) {
   );
 }
 
-// ---------- page ----------
-function render(d) {
-  $("asof").textContent = `As at ${date(d.asOf)}`;
+// ---------- tabs ----------
+const TABS = [
+  ["overview", "Overview"],
+  ["assets", "Shares and assets"],
+  ["pnl", "Profit and loss"],
+  ["spending", "Spending"],
+  ["transactions", "Transactions"],
+  ["exceptional", "Exceptional items"],
+  ["tax", "Tax return"],
+  ["forecast", "Forecast"],
+  ["bills", "Bills"],
+];
+let DATA = null;
+
+function nav(active) {
+  $("tabs").replaceChildren(
+    ...TABS.map(([id, label]) => h("a", { href: `#${id}`, class: id === active ? "on" : "", "aria-current": id === active ? "page" : null }, label)),
+  );
+}
+
+function route() {
+  if (!DATA) return;
+  const id = (location.hash || "#overview").slice(1);
+  const tab = TABS.some(([t]) => t === id) ? id : "overview";
+  nav(tab);
   const c = $("content");
   c.replaceChildren();
+  ({ overview, assets, pnl, spending, transactions, exceptional, tax, forecast, bills })[tab](c, DATA);
+  window.scrollTo(0, 0);
+}
+
+function overview(c, d) {
   const nw = d.netWorth;
-  const assets = Object.values(nw.assets).reduce((a, b) => a + b, 0);
+  const assetsTotal = Object.values(nw.assets).reduce((a, b) => a + b, 0);
   const debts = Object.values(nw.liabilities).reduce((a, b) => a + b, 0);
   const first = nw.history[0];
-
   c.append(
     h(
       "div",
       { class: "tiles" },
       tile("Net worth", aud(nw.current), first ? `${aud(nw.current - first.netWorth)} since ${date(first.date)}` : null),
       tile("Accessible wealth", aud(nw.accessible), "Cash, offset and shares"),
-      tile("Assets", aud(assets)),
+      tile("Assets", aud(assetsTotal)),
       tile("Debts", aud(debts)),
     ),
-  );
-
-  c.append(
     card(
       "Net worth over time",
       "Month ends; the last point is today. The dashed line leaves out super and property.",
@@ -204,17 +228,12 @@ function render(d) {
       ]),
     ),
   );
-
   const classRows = [...Object.entries(nw.assets).map(([k, v]) => [k, v, false]), ...Object.entries(nw.liabilities).map(([k, v]) => [k, v, true])].filter(([, v]) => v);
   c.append(
     h(
       "div",
       { class: "grid2" },
-      card(
-        "Today, by class",
-        null,
-        h("table", {}, h("tbody", {}, classRows.map(([k, v, debt]) => h("tr", {}, h("td", {}, k, debt ? h("span", { class: "badge" }, "owed") : null), h("td", { class: "r" }, money(v)))))),
-      ),
+      card("Today, by class", null, h("table", {}, h("tbody", {}, classRows.map(([k, v, debt]) => h("tr", {}, h("td", {}, k, debt ? h("span", { class: "badge" }, "owed") : null), h("td", { class: "r" }, money(v))))))),
       card(
         "Accounts",
         "Balances from your statements; account numbers removed.",
@@ -222,8 +241,9 @@ function render(d) {
       ),
     ),
   );
+}
 
-  // Shares.
+function assets(c, d) {
   const sh = d.shares;
   c.append(
     card(
@@ -256,11 +276,9 @@ function render(d) {
       ),
     ),
   );
-
-  // Property, car, super.
-  const assetsGrid = h("div", { class: "grid2" });
-  for (const p of d.property) {
-    assetsGrid.append(
+  const g = h("div", { class: "grid2" });
+  for (const p of d.property)
+    g.append(
       card(
         p.name,
         p.estimate ? `From ${p.sales} like-for-like sales in the building${p.impliedGrowthPct != null ? `, which imply ${p.impliedGrowthPct}% a year` : ""}.` : "No comparable sales yet.",
@@ -275,9 +293,8 @@ function render(d) {
           : h("div", { class: "num" }, aud(p.recorded || 0)),
       ),
     );
-  }
-  for (const v of d.vehicles) {
-    assetsGrid.append(
+  for (const v of d.vehicles)
+    g.append(
       card(
         v.name,
         v.estimate ? `From current listings${v.km ? ` at ${v.km.toLocaleString("en-AU")} km` : ""}, below asking price.` : null,
@@ -286,10 +303,9 @@ function render(d) {
           : h("div", { class: "num" }, aud(v.recorded || 0)),
       ),
     );
-  }
   for (const f of d.super) {
     const last = f.points[f.points.length - 1];
-    assetsGrid.append(
+    g.append(
       card(
         f.name,
         f.cagr != null ? `${pct(f.cagr)} a year since ${date(f.points[0].date)}, contributions included.` : null,
@@ -298,84 +314,362 @@ function render(d) {
       ),
     );
   }
-  c.append(assetsGrid);
+  c.append(g);
+}
 
-  // Profit and loss.
+function pnl(c, d) {
   const pl = d.pnl;
-  const topCosts = pl.costs.slice(0, 12);
-  const maxCost = Math.max(1, ...topCosts.map((x) => x.amount));
+  const maxCost = Math.max(1, ...pl.costs.map((x) => x.amount));
+  c.append(
+    h("div", { class: "tiles" }, tile("Income", aud(pl.totals.income)), tile("Costs", aud(pl.totals.costs)), tile(pl.totals.net >= 0 ? "Profit" : "Loss", aud(pl.totals.net)), tile("Invested", aud(pl.totals.investing))),
+    h(
+      "div",
+      { class: "grid2" },
+      card(
+        "Costs, last 12 months",
+        `${date(pl.from)} to ${date(pl.to)}. Transfers between your own accounts are left out.`,
+        h(
+          "table",
+          {},
+          h(
+            "tbody",
+            {},
+            pl.costs.map((x) =>
+              h("tr", {}, h("td", {}, x.category, h("span", { class: "sub" }, x.bucket), h("div", { class: "bar", style: { width: `${((x.amount / maxCost) * 100).toFixed(1)}%`, marginTop: "4px" } })), h("td", { class: "r" }, money(x.amount))),
+            ),
+          ),
+        ),
+      ),
+      card("Income, last 12 months", null, h("table", {}, h("tbody", {}, pl.income.map((x) => h("tr", {}, h("td", {}, x.category), h("td", { class: "r" }, money(x.amount))))))),
+    ),
+  );
+}
+
+function spending(c, d) {
+  const months = [...new Set(d.spending.map((x) => x.month))].sort();
+  const groups = GROUPS.filter((g) => d.spending.some((x) => x.group === g));
+  const rows = months.map((m) => Object.fromEntries([["month", m], ...groups.map((g) => [g, d.spending.filter((x) => x.month === m && x.group === g).reduce((a, x) => a + x.amount, 0)])]));
+  const totals = groups.map((g) => [g, rows.reduce((a, r) => a + r[g], 0)]).sort((a, b) => b[1] - a[1]);
+  const all = totals.reduce((a, [, v]) => a + v, 0) || 1;
+  c.append(
+    card("Spending by month", "Expenses by group; transfers, investing and debt principal are not spending.", legend(groups.map((g) => [g, groupColour(g)])), stackedBars(rows, groups, groupColour)),
+    h(
+      "div",
+      { class: "grid2" },
+      card(
+        "By group, 12 months",
+        null,
+        h("table", {}, h("tbody", {}, totals.map(([g, v]) => h("tr", {}, h("td", {}, h("i", { class: "dot", style: { background: groupColour(g) } }), g), h("td", { class: "r num" }, `${((v / all) * 100).toFixed(0)}%`), h("td", { class: "r" }, money(v)))))),
+      ),
+      card(
+        "Cash in against expenses",
+        "Each month's income and its expenses.",
+        legend([
+          ["Cash in", "var(--g3)"],
+          ["Expenses", "var(--g2)"],
+        ]),
+        groupedBars(
+          d.cash.map((m) => ({ month: `${m.month}-01`, cashIn: m.cashIn, expenses: m.expenses })),
+          [
+            { key: "cashIn", label: "Cash in", colour: "var(--g3)" },
+            { key: "expenses", label: "Expenses", colour: "var(--g2)" },
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+function transactions(c, d) {
+  const all = d.transactions;
+  const accounts = [...new Set(all.map((t) => t.account))].sort();
+  const cats = [...new Set(all.map((t) => t.category).filter(Boolean))].sort();
+  const q = h("input", { type: "search", placeholder: "Search descriptions and details", "aria-label": "Search" });
+  const acct = h("select", { "aria-label": "Account" }, h("option", { value: "" }, "All accounts"), accounts.map((a) => h("option", { value: a }, a)));
+  const cat = h("select", { "aria-label": "Category" }, h("option", { value: "" }, "All categories"), h("option", { value: "-" }, "Needs a category"), cats.map((x) => h("option", { value: x }, x)));
+  const sort = h("select", { "aria-label": "Sort" }, h("option", { value: "date" }, "Newest first"), h("option", { value: "amount" }, "Largest first"));
+  const summary = h("p", { class: "muted" });
+  const body = h("tbody");
+  const more = h("button", { type: "button", class: "ghost" }, "Show more");
+  let shown = 200;
+  const filtered = () => {
+    const needle = q.value.trim().toLowerCase();
+    let rows = all.filter(
+      (t) =>
+        (!acct.value || t.account === acct.value) &&
+        (!cat.value || (cat.value === "-" ? !t.category && !t.transfer : t.category === cat.value)) &&
+        (!needle || `${t.description} ${t.detail ?? ""} ${t.category ?? ""}`.toLowerCase().includes(needle)),
+    );
+    if (sort.value === "amount") rows = [...rows].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+    return rows;
+  };
+  const draw = () => {
+    const rows = filtered();
+    const inflow = rows.filter((t) => t.amount > 0).reduce((a, t) => a + t.amount, 0);
+    const out = rows.filter((t) => t.amount < 0).reduce((a, t) => a + t.amount, 0);
+    summary.textContent = `${rows.length.toLocaleString("en-AU")} transactions · in ${aud(inflow, 2)} · out ${aud(out, 2)}`;
+    body.replaceChildren(
+      ...rows.slice(0, shown).map((t) =>
+        h(
+          "tr",
+          {},
+          h("td", { class: "nowrap" }, date(t.date)),
+          h(
+            "td",
+            {},
+            t.description,
+            t.pending ? h("span", { class: "badge" }, "Pending") : null,
+            t.transfer ? h("span", { class: "badge" }, "Transfer") : null,
+            t.exceptional ? h("span", { class: "badge warn" }, "Exceptional") : null,
+            t.detail ? h("span", { class: "sub" }, t.detail) : null,
+          ),
+          h("td", {}, t.account),
+          h("td", {}, t.transfer ? h("span", { class: "muted" }, "Between your accounts") : t.category || h("span", { class: "muted" }, "Not categorised")),
+          h("td", { class: `r nowrap ${t.amount < 0 ? "neg" : "pos"}` }, h("span", { class: "num" }, `${t.amount > 0 ? "+" : ""}${aud(t.amount, 2)}`)),
+        ),
+      ),
+    );
+    more.hidden = rows.length <= shown;
+  };
+  for (const el of [acct, cat, sort]) el.addEventListener("change", () => ((shown = 200), draw()));
+  q.addEventListener("input", () => ((shown = 200), draw()));
+  more.addEventListener("click", () => ((shown += 200), draw()));
   c.append(
     card(
-      "Profit and loss, last 12 months",
-      `${date(pl.from)} to ${date(pl.to)}. Transfers between your own accounts are left out.`,
+      "Transactions",
+      "Every confirmed transaction. Card, account and reference numbers are removed from the text.",
+      h("div", { class: "filters" }, q, acct, cat, sort),
+      summary,
+      h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Description", "Account", "Category", "Amount"].map((t, i) => h("th", { class: i === 4 ? "r" : "" }, t)))), body)),
+      h("div", { class: "more" }, more),
+    ),
+  );
+  draw();
+}
+
+function exceptional(c, d) {
+  const e = d.exceptional;
+  const marked = e.items.filter((i) => i.marked);
+  const suggested = e.items.filter((i) => !i.marked);
+  const row = (i) =>
+    h(
+      "tr",
+      {},
+      h("td", { class: "nowrap" }, date(i.date)),
+      h(
+        "td",
+        {},
+        i.description,
+        i.marked ? h("span", { class: "badge" }, "Marked") : null,
+        i.strength ? h("span", { class: `badge ${i.strength === "strong" ? "warn" : ""}` }, i.strength === "strong" ? "Strong" : "Possible") : null,
+        i.reason ? h("span", { class: "sub" }, i.reason) : null,
+      ),
+      h("td", {}, i.category),
+      h("td", { class: `r nowrap ${i.kind === "income" ? "pos" : ""}` }, money(i.kind === "income" ? i.amount : -i.amount)),
+    );
+  const table = (rows) =>
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Transaction", "Category", "Amount"].map((t, i) => h("th", { class: i === 3 ? "r" : "" }, t)))), h("tbody", {}, rows.map(row))));
+  c.append(
+    h(
+      "div",
+      { class: "tiles" },
+      tile("Marked exceptional", String(marked.length), `${suggested.length} more suggested`),
+      tile("Costs, everything", aud(e.withAll.costs)),
+      tile("Costs without exceptional", aud(e.without.costs), e.withAll.costs ? `${(((e.withAll.costs - e.without.costs) / e.withAll.costs) * 100).toFixed(1)}% less` : null),
+      tile("Profit without exceptional", aud(e.without.net), `against ${aud(e.withAll.net)} with them`),
+    ),
+    card("Marked", `One-offs the app leaves out when its switch is set to Left out (${date(e.from)} to ${date(e.to)}).`, marked.length ? table(marked) : h("p", { class: "muted" }, "None marked.")),
+    card("Suggested", "Large or unusual against your own pattern; not marked yet.", table(suggested)),
+  );
+}
+
+function tax(c, d) {
+  const sel = h("div", { class: "pills", role: "group", "aria-label": "Financial year" });
+  const body = h("div", { class: "stack" });
+  const TREAT = { income: "Income", claim: "Claim", confirm: "Confirm first", spread: "Spread", depreciate: "Depreciate", capital: "Capital", private: "Private", credit: "Tax credit", check: "Cross-check", gain: "Gain", "gain (discount)": "Gain (50% discount)", loss: "Loss" };
+  const res = (x) => (x.result > 0 ? `${aud(x.result, 2)} to pay` : `${aud(-x.result, 2)} refund`);
+  const show = (i) => {
+    sel.querySelectorAll("button").forEach((b, j) => b.classList.toggle("on", j === i));
+    const t = d.tax[i];
+    const e = t.estimate;
+    const chosen = e.cases.find((x) => x.pct === e.chosenPct) ?? e.cases[1];
+    const rowsSpec = [
+      ["Net rent", (x) => x.rentalNet],
+      ["Taxable income", (x) => x.taxable],
+      ["Income tax", (x) => x.incomeTax],
+      ["Medicare levy", (x) => x.medicare],
+      ["HELP repayment", (x) => x.help],
+      ["Tax withheld", (x) => -x.payg],
+      ["Credits", (x) => -x.credits],
+    ];
+    body.replaceChildren(
       h(
         "div",
         { class: "tiles" },
-        tile("Income", aud(pl.totals.income)),
-        tile("Costs", aud(pl.totals.costs)),
-        tile(pl.totals.net >= 0 ? "Profit" : "Loss", aud(pl.totals.net)),
-        tile("Invested", aud(pl.totals.investing)),
+        tile("Estimate", res(chosen), `${chosen.pct}% of loan interest deductible${e.chosenPct ? " (your position)" : ""}`),
+        tile("Taxable income", aud(chosen.taxable)),
+        tile("Salary", aud(e.salary), e.salaryBasis),
+        tile("Tax withheld", aud(e.payg)),
       ),
-      h(
-        "div",
-        { class: "grid2" },
+      card(
+        "Estimate by how much loan interest is deductible",
+        "An estimate to plan with, not your assessment.",
         h(
           "div",
-          {},
-          h("h3", { class: "muted" }, "Largest costs"),
+          { class: "scroll" },
           h(
             "table",
             {},
+            h("thead", {}, h("tr", {}, h("th", {}, ""), e.cases.map((x) => h("th", { class: "r" }, `${x.pct}%${x.pct === e.chosenPct ? " (yours)" : ""}`)))),
             h(
               "tbody",
               {},
-              topCosts.map((x) =>
-                h("tr", {}, h("td", {}, x.category, h("div", { class: "bar", style: { width: `${((x.amount / maxCost) * 100).toFixed(1)}%`, marginTop: "4px" } })), h("td", { class: "r" }, money(x.amount))),
+              rowsSpec.map(([label, f]) => h("tr", {}, h("td", {}, label), e.cases.map((x) => h("td", { class: "r" }, money(f(x)))))),
+              h("tr", {}, h("td", {}, h("strong", {}, "Result")), e.cases.map((x) => h("td", { class: `r ${x.result > 0 ? "neg" : "pos"}` }, h("strong", {}, res(x))))),
+            ),
+          ),
+        ),
+      ),
+      ...t.buckets
+        .filter((b) => b.lines.length)
+        .map((b) =>
+          card(
+            b.title,
+            b.note,
+            h(
+              "div",
+              { class: "scroll" },
+              h(
+                "table",
+                {},
+                h(
+                  "tbody",
+                  {},
+                  b.lines.map((l) =>
+                    h(
+                      "tr",
+                      {},
+                      h("td", {}, l.label, l.taxLabel ? h("span", { class: "badge" }, l.taxLabel) : null, l.date ? h("span", { class: "sub" }, date(l.date)) : null),
+                      h("td", { class: "muted nowrap" }, TREAT[l.treatment] ?? l.treatment, l.workUsePct != null && l.workUsePct !== 100 ? ` · ${l.workUsePct}% work` : ""),
+                      h("td", { class: "r" }, money(l.amount)),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
         ),
-        h("div", {}, h("h3", { class: "muted" }, "Income"), h("table", {}, h("tbody", {}, pl.income.map((x) => h("tr", {}, h("td", {}, x.category), h("td", { class: "r" }, money(x.amount))))))),
+    );
+  };
+  d.tax.forEach((t, i) => {
+    const b = h("button", { type: "button", class: "pill" }, t.fy);
+    b.addEventListener("click", () => show(i));
+    sel.append(b);
+  });
+  c.append(sel, body);
+  // The last complete year first (the one being lodged).
+  show(Math.max(0, d.tax.length - 2));
+}
+
+/** Net worth against age (x is a number, not a date). */
+function ageChart(series) {
+  const W = 760;
+  const H = 260;
+  const pad = { l: 58, r: 12, t: 10, b: 24 };
+  const xs = series[0].points.map((p) => p.x);
+  const all = series.flatMap((sr) => sr.points.map((p) => p.y));
+  const lo = Math.min(0, ...all);
+  const hi = Math.max(1, ...all);
+  const X = (i) => pad.l + (i * (W - pad.l - pad.r)) / Math.max(1, xs.length - 1);
+  const Y = (v) => pad.t + ((hi - v) * (H - pad.t - pad.b)) / (hi - lo);
+  const svg = s("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Net worth by age" });
+  for (let k = 0; k <= 4; k++) {
+    const v = lo + ((hi - lo) * k) / 4;
+    svg.append(s("line", { x1: pad.l, x2: W - pad.r, y1: Y(v), y2: Y(v), stroke: "var(--grid)" }), s("text", { x: pad.l - 6, y: Y(v) + 4, "text-anchor": "end" }, audK(v)));
+  }
+  const step = Math.ceil(xs.length / 10);
+  xs.forEach((x, i) => {
+    if (i % step === 0 || i === xs.length - 1) svg.append(s("text", { x: X(i), y: H - 6, "text-anchor": i === xs.length - 1 ? "end" : "middle" }, `Age ${x}`));
+  });
+  for (const sr of series) svg.append(s("path", { d: sr.points.map((p, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(p.y).toFixed(1)}`).join(""), fill: "none", stroke: sr.colour, "stroke-width": 2 }));
+  xs.forEach((x, i) => {
+    const w = (W - pad.l - pad.r) / Math.max(1, xs.length - 1);
+    svg.append(s("rect", { x: X(i) - w / 2, y: pad.t, width: w, height: H - pad.t - pad.b, fill: "transparent" }, s("title", {}, `Age ${x}\n${series.map((sr) => `${sr.label}: ${aud(sr.points[i].y)}`).join("\n")}`)));
+  });
+  return svg;
+}
+
+function forecast(c, d) {
+  const f = d.forecast;
+  const COL = { invest: "var(--g7)", loan: "var(--g1)", split: "var(--g3)", cash: "var(--g4)" };
+  const a = f.assumptions; // amounts here are whole dollars, as the app keeps them
+  const at = (sc) => sc.years.find((y) => y.age === a.retireAge) ?? sc.years[sc.years.length - 1];
+  c.append(
+    h(
+      "div",
+      { class: "tiles" },
+      f.scenarios.map((sc) =>
+        tile(
+          sc.label + (sc.key === f.plan ? " (your plan)" : ""),
+          aud(at(sc).netWorth),
+          `net worth at ${a.retireAge}${sc.mortgageFreeAge ? ` · mortgage free at about ${Math.floor(sc.mortgageFreeAge)}` : ""}${sc.earlyRetirementAge ? ` · could stop work at about ${Math.floor(sc.earlyRetirementAge)}` : ""}`,
+        ),
+      ),
+    ),
+    card(
+      "Net worth by age, in today's dollars",
+      "Where today's balances lead under four ways of using your monthly savings, at the app's default assumptions. A planning sketch, not advice.",
+      legend(f.scenarios.map((sc) => [sc.label, COL[sc.key] ?? "var(--g9)", true])),
+      ageChart(f.scenarios.map((sc) => ({ label: sc.label, colour: COL[sc.key] ?? "var(--g9)", points: sc.years.map((y) => ({ x: y.age, y: y.netWorth })) }))),
+    ),
+    card(
+      "Assumptions",
+      null,
+      h(
+        "table",
+        {},
+        h(
+          "tbody",
+          {},
+          [
+            ["Age today", a.age],
+            ["Work until", a.retireAge],
+            ["Monthly savings", aud(a.monthlySavings * 100)],
+            ["Living costs a year", aud(a.livingCosts * 100)],
+            ["Net rent a year", aud(a.netRent * 100)],
+            ["Cost inflation", `${a.inflationPct}%`],
+            ["Pay growth", `${a.salaryGrowthPct}%`],
+            ["Property growth", `${a.propertyGrowthPct}%`],
+            ["Shares return", `${a.sharesReturnPct}%`],
+            ["Super return", `${a.superReturnPct}%`],
+            ["Mortgage rate", `${a.loanRatePct}%`],
+          ].map(([k, v]) => h("tr", {}, h("td", {}, k), h("td", { class: "r num" }, String(v)))),
+        ),
       ),
     ),
   );
+}
 
-  // Spending by group per month.
-  const months = [...new Set(d.spending.map((x) => x.month))].sort();
-  const groups = GROUPS.filter((g) => d.spending.some((x) => x.group === g));
-  const rows = months.map((m) => Object.fromEntries([["month", m], ...groups.map((g) => [g, d.spending.filter((x) => x.month === m && x.group === g).reduce((a, x) => a + x.amount, 0)])]));
-  c.append(card("Spending by month", "Expenses by group; transfers, investing and debt principal are not spending.", legend(groups.map((g) => [g, groupColour(g)])), stackedBars(rows, groups, groupColour)));
-
-  // Cash in against expenses.
+function bills(c, d) {
   c.append(
     card(
-      "Cash in against expenses",
-      "Each month's income and its expenses.",
-      legend([
-        ["Cash in", "var(--g3)"],
-        ["Expenses", "var(--g2)"],
-      ]),
-      groupedBars(
-        d.cash.map((m) => ({ month: `${m.month}-01`, cashIn: m.cashIn, expenses: m.expenses })),
-        [
-          { key: "cashIn", label: "Cash in", colour: "var(--g3)" },
-          { key: "expenses", label: "Expenses", colour: "var(--g2)" },
-        ],
-      ),
+      "Upcoming bills",
+      "Expected from your history.",
+      d.bills.length
+        ? h("table", {}, h("tbody", {}, d.bills.map((b) => h("tr", {}, h("td", {}, b.name, h("span", { class: "sub" }, `${date(b.expected)} · ${b.cadence}`)), h("td", { class: "r" }, money(Math.abs(b.amount)))))))
+        : h("p", { class: "muted" }, "None expected."),
     ),
   );
-
-  if (d.bills.length)
-    c.append(
-      card(
-        "Upcoming bills",
-        "Expected from your history.",
-        h("table", {}, h("tbody", {}, d.bills.map((b) => h("tr", {}, h("td", {}, b.name, h("span", { class: "sub" }, `${date(b.expected)} · ${b.cadence}`)), h("td", { class: "r" }, money(Math.abs(b.amount))))))),
-      ),
-    );
-
-  c.append(h("p", { class: "foot" }, `Read-only summary made ${new Date(d.generatedAt).toLocaleString("en-AU")}. No transactions or account numbers are included.`));
 }
+
+function render(d) {
+  DATA = d;
+  $("asof").textContent = `As at ${date(d.asOf)}`;
+  $("foot").textContent = `Read-only summary made ${new Date(d.generatedAt).toLocaleString("en-AU")}. Account, card and reference numbers are removed.`;
+  route();
+}
+window.addEventListener("hashchange", route);
+
 
 let sealed = null;
 async function load() {
@@ -408,7 +702,10 @@ $("unlock").addEventListener("submit", async (e) => {
 });
 
 $("lockbtn").addEventListener("click", () => {
+  // Forget the decrypted figures, not just hide them.
+  DATA = null;
   $("content").replaceChildren();
+  $("tabs").replaceChildren();
   $("app").hidden = true;
   $("lock").hidden = false;
   $("pw").focus();
